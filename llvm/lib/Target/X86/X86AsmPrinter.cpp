@@ -389,7 +389,7 @@ void X86AsmPrinter::PrintIntelMemReference(const MachineInstr *MI,
 static bool printAsmMRegister(X86AsmPrinter &P, const MachineOperand &MO,
                               char Mode, raw_ostream &O) {
   unsigned Reg = MO.getReg();
-  bool EmitPercent = true;
+  bool EmitPercent = MO.getParent()->getInlineAsmDialect() == InlineAsm::AD_ATT;
 
   if (!X86::GR8RegClass.contains(Reg) &&
       !X86::GR16RegClass.contains(Reg) &&

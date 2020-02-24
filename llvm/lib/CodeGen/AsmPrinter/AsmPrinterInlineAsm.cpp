@@ -207,11 +207,17 @@ static void EmitMSInlineAsmStr(const char *AsmStr, const MachineInstr *MI,
       }
       if (Done) break;
 
+      bool HasCurlyBraces = false;
+      if (*LastEmitted == '{') {     // ${variable}
+        ++LastEmitted;               // Consume '{' character.
+        HasCurlyBraces = true;
+      }
+
       // If we have ${:foo}, then this is not a real operand reference, it is a
       // "magic" string reference, just like in .td files.  Arrange to call
       // PrintSpecial.
-      if (LastEmitted[0] == '{' && LastEmitted[1] == ':') {
-        LastEmitted += 2;
+      if (HasCurlyBraces && *LastEmitted == ':') {
+        ++LastEmitted;
         const char *StrStart = LastEmitted;
         const char *StrEnd = strchr(StrStart, '}');
         if (!StrEnd)
@@ -233,6 +239,27 @@ static void EmitMSInlineAsmStr(const char *AsmStr, const MachineInstr *MI,
         report_fatal_error("Bad $ operand number in inline asm string: '" +
                            Twine(AsmStr) + "'");
       LastEmitted = IDEnd;
+
+      char Modifier[2] = { 0, 0 };
+
+      if (HasCurlyBraces) {
+        // If we have curly braces, check for a modifier character.  This
+        // supports syntax like ${0:u}, which correspond to "%u0" in GCC asm.
+        if (*LastEmitted == ':') {
+          ++LastEmitted;    // Consume ':' character.
+          if (*LastEmitted == 0)
+            report_fatal_error("Bad ${:} expression in inline asm string: '" +
+                               Twine(AsmStr) + "'");
+
+          Modifier[0] = *LastEmitted;
+          ++LastEmitted;    // Consume modifier character.
+        }
+
+        if (*LastEmitted != '}')
+          report_fatal_error("Bad ${} expression in inline asm string: '" +
+                             Twine(AsmStr) + "'");
+        ++LastEmitted;    // Consume '}' character.
+      }
 
       if (Val >= NumOperands-1)
         report_fatal_error("Invalid $ operand number in inline asm string: '" +
@@ -261,10 +288,28 @@ static void EmitMSInlineAsmStr(const char *AsmStr, const MachineInstr *MI,
         unsigned OpFlags = MI->getOperand(OpNo).getImm();
         ++OpNo;  // Skip over the ID number.
 
-        if (InlineAsm::isMemKind(OpFlags)) {
-          Error = AP->PrintAsmMemoryOperand(MI, OpNo, /*Modifier*/ nullptr, OS);
+        // FIXME: Shouldn't arch-independent output template handling go into
+        // PrintAsmOperand?
+        if (Modifier[0] == 'l') { // Labels are target independent.
+          if (MI->getOperand(OpNo).isBlockAddress()) {
+            const BlockAddress *BA = MI->getOperand(OpNo).getBlockAddress();
+            MCSymbol *Sym = AP->GetBlockAddressSymbol(BA);
+            Sym->print(OS, AP->MAI);
+            MMI->getContext().registerInlineAsmLabel(Sym);
+          } else if (MI->getOperand(OpNo).isMBB()) {
+            const MCSymbol *Sym = MI->getOperand(OpNo).getMBB()->getSymbol();
+            Sym->print(OS, AP->MAI);
+          } else {
+            Error = true;
+          }
         } else {
-          Error = AP->PrintAsmOperand(MI, OpNo, /*Modifier*/ nullptr, OS);
+          if (InlineAsm::isMemKind(OpFlags)) {
+            Error = AP->PrintAsmMemoryOperand(
+                MI, OpNo, Modifier[0] ? Modifier : nullptr, OS);
+          } else {
+            Error = AP->PrintAsmOperand(MI, OpNo,
+                                        Modifier[0] ? Modifier : nullptr, OS);
+          }
         }
       }
       if (Error) {
