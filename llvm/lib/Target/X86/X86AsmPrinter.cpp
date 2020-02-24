@@ -428,6 +428,41 @@ static bool printAsmMRegister(X86AsmPrinter &P, const MachineOperand &MO,
   return false;
 }
 
+static bool printAsmVRegister(X86AsmPrinter &P, const MachineOperand &MO,
+                              char Mode, raw_ostream &O) {
+  unsigned Reg = MO.getReg();
+  bool EmitPercent = MO.getParent()->getInlineAsmDialect() == InlineAsm::AD_ATT;
+
+  unsigned Index;
+  if (X86::VR128XRegClass.contains(Reg))
+    Index = Reg - X86::XMM0;
+  else if (X86::VR256XRegClass.contains(Reg))
+    Index = Reg - X86::YMM0;
+  else if (X86::VR512RegClass.contains(Reg))
+    Index = Reg - X86::ZMM0;
+  else
+    return true;
+
+  switch (Mode) {
+  default: return true;  // Unknown mode.
+  case 'x': // Print V4SFmode register
+    Reg = X86::XMM0 + Index;
+    break;
+  case 't': // Print V8SFmode register
+    Reg = X86::YMM0 + Index;
+    break;
+  case 'g': // Print V16SFmode register
+    Reg = X86::ZMM0 + Index;
+    break;
+  }
+
+  if (EmitPercent)
+    O << '%';
+
+  O << X86ATTInstPrinter::getRegisterName(Reg);
+  return false;
+}
+
 /// PrintAsmOperand - Print out an operand for an inline asm expression.
 ///
 bool X86AsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
@@ -499,6 +534,14 @@ bool X86AsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
     case 'V': // Print native register without '%'
       if (MO.isReg())
         return printAsmMRegister(*this, MO, ExtraCode[0], O);
+      PrintOperand(MI, OpNo, O);
+      return false;
+
+    case 'x': // Print V4SFmode register
+    case 't': // Print V8SFmode register
+    case 'g': // Print V16SFmode register
+      if (MO.isReg())
+        return printAsmVRegister(*this, MO, ExtraCode[0], O);
       PrintOperand(MI, OpNo, O);
       return false;
 
