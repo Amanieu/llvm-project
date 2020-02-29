@@ -45238,6 +45238,8 @@ X86TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
         if (Subtarget.hasAVX())
           return std::make_pair(0U, &X86::VR256RegClass);
         break;
+      case MVT::v64i8:
+      case MVT::v32i16:
       case MVT::v8f64:
       case MVT::v16f32:
       case MVT::v16i32:
