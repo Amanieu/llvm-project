@@ -390,6 +390,11 @@ def GR8 : RegisterClass<"X86", [i8],  8,
   }];
 }
 
+// Inline assembly shouldn't allocate the *H registers
+def GR8_L : RegisterClass<"X86", [i8],  8,
+                        (add AL, CL, DL, BL, BH, SIL, DIL, BPL, SPL,
+                             R8B, R9B, R10B, R11B, R14B, R15B, R12B, R13B)>;
+
 let isAllocatable = 0 in
 def GRH8 : RegisterClass<"X86", [i8],  8,
                          (add SIH, DIH, BPH, SPH, R8BH, R9BH, R10BH, R11BH,
