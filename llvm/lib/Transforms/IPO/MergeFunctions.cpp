@@ -123,6 +123,7 @@
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/MergeFunctions.h"
 #include "llvm/Transforms/Utils/FunctionComparator.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 #include <algorithm>
 #include <cassert>
 #include <iterator>
@@ -227,6 +228,10 @@ private:
   /// A work queue of functions that may have been modified and should be
   /// analyzed again.
   std::vector<WeakTrackingVH> Deferred;
+
+  /// Set of values marked as used in llvm.used and llvm.compiler.used.
+  SmallPtrSet<GlobalValue *, 4> Used;
+  SmallPtrSet<GlobalValue *, 4> CompilerUsed;
 
 #ifndef NDEBUG
   /// Checks the rules of order relation introduced among functions set.
@@ -410,6 +415,14 @@ static bool isEligibleForMerging(Function &F) {
 bool MergeFunctions::runOnModule(Module &M) {
   bool Changed = false;
 
+  // Keep track of functions referred to by llvm.used/llvm.compiler.used.
+  SmallVector<GlobalValue *, 4> UsedV;
+  collectUsedGlobalVariables(M, UsedV, /*CompilerUsed=*/false);
+  Used.insert(UsedV.begin(), UsedV.end());
+  SmallVector<GlobalValue *, 4> CompilerUsedV;
+  collectUsedGlobalVariables(M, CompilerUsedV, /*CompilerUsed=*/true);
+  CompilerUsed.insert(CompilerUsedV.begin(), CompilerUsedV.end());
+
   // All functions in the module, ordered by hash. Functions with a unique
   // hash value are easily eliminated.
   std::vector<std::pair<FunctionComparator::FunctionHash, Function *>>
@@ -456,6 +469,8 @@ bool MergeFunctions::runOnModule(Module &M) {
   FnTree.clear();
   FNodesInTree.clear();
   GlobalNumbers.clear();
+  Used.clear();
+  CompilerUsed.clear();
 
   return Changed;
 }
@@ -835,7 +850,20 @@ void MergeFunctions::mergeTwoFunctions(Function *F, Function *G) {
         // If G's address is not significant, replace it entirely.
         Constant *BitcastF = ConstantExpr::getBitCast(F, G->getType());
         removeUsers(G);
+
         G->replaceAllUsesWith(BitcastF);
+
+        // Functions referred to by llvm.used/llvm.compiler.used are special:
+        // there are uses of the symbol name that are not visible to LLVM,
+        // usually from inline asm. We need to handle these by keeping the old
+        // symbol in the used list as an alias or thunk.
+        //
+        // RAUW will have removed references to G from the existing list, make
+        // sure to add it back.
+        if (Used.contains(G))
+          appendToUsed(*G->getParent(), {G});
+        if (CompilerUsed.contains(G))
+          appendToCompilerUsed(*G->getParent(), {G});
       } else {
         // Redirect direct callers of G to F. (See note on MergeFunctionsPDI
         // above).
